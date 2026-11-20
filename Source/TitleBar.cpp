@@ -49,6 +49,9 @@ namespace
 {
    const std::string kManagePluginsLabel = "manage plugins...";
    const std::string kPluginsDropdownLabel = "plugins:";
+   constexpr float kResizeHandleWidth = 100;
+   constexpr float kResizeHandleHeight = 13;
+   constexpr float kResizeHandleMarginY = 5;
 }
 
 SpawnList::SpawnList(IDropdownListener* owner, int x, int y, std::string label, ModuleCategory moduleCategory, bool showDecorators)
@@ -143,8 +146,12 @@ void TitleBar::CreateUIControls()
    BUTTON_SIZE(mMenuButton, "menu", 50, 32);
    ENDUIBLOCK0();
 
+#if BESPOKE_MOBILE
+   mTouchNavigationButton = new ClickButton(this, "pan/zoom", 195, 1);
+   mTouchNavigationButton->SetDimensions(60, 32);
+#endif
+
    mDisplayHelpButton = new ClickButton(this, " ? ", 380, 1);
-   mDisplayUserPrefsEditorButton = new ClickButton(this, "settings", 330, 1);
    mPlayPauseButton = new ClickButton(this, "play/pause", 300, 1, ButtonDisplayStyle::kPause);
    mLoadLayoutDropdown = new DropdownList(this, "load layout", 140, 20, &mLoadLayoutIndex);
    mSaveLayoutButton = new ClickButton(this, "save layout", 280, 19);
@@ -212,7 +219,11 @@ void SpawnListManager::SetModuleFactory(ModuleFactory* factory)
    mDropdowns.push_back(&mAudioModules);
    mDropdowns.push_back(&mModulatorModules);
    mDropdowns.push_back(&mPulseModules);
+#if BESPOKE_PLUGIN_HOSTING_SUPPORT
    mDropdowns.push_back(&mPlugins);
+#else
+   mPlugins.GetList()->SetShowing(false); //nothing to list, and "manage plugins..." would open a scanner with no formats
+#endif
    mDropdowns.push_back(&mOtherModules);
    mDropdowns.push_back(&mPrefabs);
 }
@@ -291,18 +302,45 @@ void TitleBar::OnClicked(float x, float y, bool right)
 {
    IDrawableModule::OnClicked(x, y, right);
 
+   if (right)
+      return;
+
    if (mLeftCornerHovered)
       TheSynth->GetLocationZoomer()->EnterVanityPanningMode();
+
+   float w, h;
+   GetModuleDimensions(w, h);
+   if (x > w - GetSideMargin() - kResizeHandleWidth && y > h - kResizeHandleHeight)
+   {
+      mIsDraggingSize = true;
+      mDragEdgeYOffset = h - y;
+   }
+}
+
+void TitleBar::MouseReleased()
+{
+   mIsDraggingSize = false;
 }
 
 bool TitleBar::MouseMoved(float x, float y)
 {
    IDrawableModule::MouseMoved(x, y);
 
-   if (x < 130 && y < 36)
+   if (x < 130 + GetSideMargin() && y < 36)
       mLeftCornerHovered = true;
    else
       mLeftCornerHovered = false;
+
+   if (mIsDraggingSize)
+   {
+      if (mSpecifiedHeight == -1)
+         mSpecifiedHeight = GetFullHeight();
+
+      mSpecifiedHeight = y + mDragEdgeYOffset;
+
+      if (mSpecifiedHeight > GetFullHeight()) //maxed out
+         mSpecifiedHeight = -1;
+   }
 
    return false;
 }
@@ -312,28 +350,43 @@ float TitleBar::GetPixelWidth() const
    return ofGetWidth() / GetOwningContainer()->GetDrawScale();
 }
 
+//keeps the title bar's contents clear of screen areas that might be cut off, like the rounded corners of phone screens.
+//iOS doesn't expose the corner radius, so this uses the screen's safe area insets, which cover the corners (and notches)
+//for the full height of the screen. the title bar only spans the top of the corners, so by default it uses a fraction of them
+float TitleBar::GetSideMargin() const
+{
+   auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+   if (display == nullptr)
+      return 0;
+   int inset = std::max(display->safeAreaInsets.getLeft(), display->safeAreaInsets.getRight());
+   return inset * UserPrefs.safe_area_margin.Get() / GetOwningContainer()->GetDrawScale();
+}
+
 void TitleBar::DrawModule()
 {
-   if (HiddenByZoom())
-      return;
-
    ofSetColor(255, 255, 255);
 
-   ofPushStyle();
-   if (gHoveredModule == this && mLeftCornerHovered)
-      ofSetColor(ofColor::lerp(ofColor::black, ofColor::white, ofMap(sin(gTime / 1000 * PI * 2), -1, 1, .7f, .9f)));
-   DrawTextBold("bespoke", 2, 28, 34);
+   const float margin = GetSideMargin();
+   bool hideElements = mSpecifiedHeight >= 0 && mSpecifiedHeight < 29;
+
+   if (!hideElements)
+   {
+      ofPushStyle();
+      if (gHoveredModule == this && mLeftCornerHovered)
+         ofSetColor(ofColor::lerp(ofColor::black, ofColor::white, ofMap(sin(gTime / 1000 * PI * 2), -1, 1, .7f, .9f)));
+      DrawTextBold("bespoke", 2 + margin, 28, 34);
 #if BESPOKE_NIGHTLY && !BESPOKE_SUPPRESS_NIGHTLY_LABEL
-   DrawTextNormal("nightly", 90, 35, 8);
+      DrawTextNormal("nightly", 90 + margin, 35, 8);
 #endif
 #if DEBUG
-   ofFill();
-   ofSetColor(0, 0, 0, 180);
-   ofRect(13, 12, 90, 17);
-   ofSetColor(255, 0, 0);
-   DrawTextBold("debug build", 17, 25, 17);
+      ofFill();
+      ofSetColor(0, 0, 0, 180);
+      ofRect(13 + margin, 12, 90, 17);
+      ofSetColor(255, 0, 0);
+      DrawTextBold("debug build", 17 + margin, 25, 17);
 #endif
-   ofPopStyle();
+      ofPopStyle();
+   }
 
    std::string info;
    if (TheSynth->GetMoveModule())
@@ -341,16 +394,42 @@ void TitleBar::DrawModule()
    if (IKeyboardFocusListener::GetActiveKeyboardFocus())
       info += " (entering text)";
 
-   float pixelWidth = GetPixelWidth();
+   float pixelWidth = GetPixelWidth() - margin; //the right edge to lay out against
 
    DrawTextRightJustify(info, pixelWidth - 140, 32);
 
+   mMenuButton->SetShowing(!hideElements);
+   if (mTouchNavigationButton != nullptr)
+      mTouchNavigationButton->SetShowing(!hideElements);
+   mPlayPauseButton->SetShowing(!hideElements);
+   mDisplayHelpButton->SetShowing(!hideElements);
+   for (auto* spawnList : mSpawnLists.GetDropdowns())
+      spawnList->GetList()->SetShowing(!hideElements);
+
+   mMenuButton->SetPosition(140 + margin, 1);
+   mLoadLayoutDropdown->SetPosition(140 + margin, 20);
+   mSaveLayoutButton->SetPosition(280 + margin, 19);
    mMenuButton->Draw();
+   if (mTouchNavigationButton != nullptr)
+   {
+      mTouchNavigationButton->SetPosition(195 + margin, 1);
+      mTouchNavigationButton->Draw();
+   }
+   if (mTouchNavigationButton != nullptr && TheSynth->IsTouchNavigationMode())
+   {
+      //highlight to show the toggle is on
+      ofPushStyle();
+      ofNoFill();
+      ofSetLineWidth(2);
+      ofSetColor(100, 220, 255);
+      ofRect(mTouchNavigationButton->GetRect(K(local)));
+      ofPopStyle();
+   }
    mSaveLayoutButton->Draw();
    mLoadLayoutDropdown->Draw();
    mPlayPauseButton->Draw();
 
-   float startX = 200;
+   float startX = (mTouchNavigationButton != nullptr ? 260 : 200) + margin;
    float startY = 2;
 
    bool newline = true;
@@ -387,25 +466,38 @@ void TitleBar::DrawModule()
    }
    mModuleCategory = type;
 
-   float usage = TheSynth->GetAudioDeviceManager().getCpuUsage();
-   std::string stats;
-   stats += "fps:" + ofToString(ofGetFrameRate(), 0);
-   stats += "  audio cpu:" + ofToString(usage * 100, 1);
-   if (usage > 1)
-      ofSetColor(255, 150, 150);
-   else
-      ofSetColor(255, 255, 255);
-   DrawTextRightJustify(stats, ofGetWidth() / GetOwningContainer()->GetDrawScale() - 5, 33);
-   mDisplayHelpButton->SetPosition(ofGetWidth() / GetOwningContainer()->GetDrawScale() - 20, 4);
+   if (!hideElements)
+   {
+      float usage = TheSynth->GetAudioDeviceManager().getCpuUsage();
+      std::string stats;
+      stats += "fps:" + ofToString(ofGetFrameRate(), 0);
+      stats += "  audio cpu:" + ofToString(usage * 100, 1);
+      if (usage > 1)
+         ofSetColor(255, 150, 150);
+      else
+         ofSetColor(255, 255, 255);
+      DrawTextRightJustify(stats, pixelWidth - 5, 33);
+   }
+
+   mDisplayHelpButton->SetPosition(pixelWidth - 20, 4);
    mDisplayHelpButton->Draw();
-   mDisplayUserPrefsEditorButton->SetPosition(mDisplayHelpButton->GetPosition(true).x - mDisplayUserPrefsEditorButton->GetRect().width - 5, 4);
-   mDisplayUserPrefsEditorButton->Draw();
    if (TheSynth->IsAudioPaused())
       mPlayPauseButton->SetDisplayStyle(ButtonDisplayStyle::kPlay);
    else
       mPlayPauseButton->SetDisplayStyle(ButtonDisplayStyle::kPause);
-   mPlayPauseButton->SetPosition(mDisplayUserPrefsEditorButton->GetPosition(true).x - mPlayPauseButton->GetRect().width - 5, 4);
+   mPlayPauseButton->SetPosition(mDisplayHelpButton->GetPosition(true).x - mPlayPauseButton->GetRect().width - 5, 4);
    mPlayPauseButton->Draw();
+
+   if (mSpecifiedHeight != -1 || mNumDropdownRows >= 3)
+   {
+      ofPushStyle();
+      ofSetColor(255, 255, 255, 64);
+      ofFill();
+      float w, h;
+      GetDimensions(w, h);
+      ofRect(w - kResizeHandleWidth - GetSideMargin(), h - kResizeHandleHeight + kResizeHandleMarginY, kResizeHandleWidth - 10, kResizeHandleHeight - kResizeHandleMarginY * 2, kResizeHandleHeight - kResizeHandleMarginY * 2 - 1);
+      ofPopStyle();
+   }
 }
 
 void TitleBar::DrawModuleUnclipped()
@@ -436,8 +528,15 @@ void TitleBar::DrawModuleUnclipped()
       ofPopStyle();
    }
 
-   if (HiddenByZoom())
-      return;
+   if (int deviceRate = TheSynth->GetResamplingDeviceSampleRate(); deviceRate > 0)
+   {
+      ofPushStyle();
+      ofSetColor(ofColor::yellow);
+      float titleBarWidth, titleBarHeight;
+      TheTitleBar->GetDimensions(titleBarWidth, titleBarHeight);
+      DrawTextNormal("warning: resampling " + ofToString(gSampleRate / UserPrefs.oversampling.Get()) + " to " + ofToString(deviceRate) + " for the audio device", 5 + GetSideMargin(), titleBarHeight + 14);
+      ofPopStyle();
+   }
 
    if (sShowInitialHelpOverlay)
    {
@@ -503,22 +602,18 @@ void TitleBar::DisplayTemporaryMessage(std::string message)
    mDisplayMessageTime = gTime;
 }
 
-bool TitleBar::HiddenByZoom() const
+float TitleBar::GetFullHeight() const
 {
-   return false; //ofGetWidth() / GetOwningContainer()->GetDrawScale() < 620;
+   return std::max(mNumDropdownRows, 2) * 18;
 }
 
 void TitleBar::GetModuleDimensions(float& width, float& height)
 {
-   if (HiddenByZoom())
-   {
-      width = 0;
-      height = 0;
-      return;
-   }
-
    width = ofGetWidth() / GetOwningContainer()->GetDrawScale() + 5;
-   height = std::max(mNumDropdownRows, 2) * 18;
+   if (mSpecifiedHeight > 0)
+      height = std::min(mSpecifiedHeight, GetFullHeight());
+   else
+      height = GetFullHeight();
 }
 
 void TitleBar::CheckboxUpdated(Checkbox* checkbox, double time)
@@ -558,17 +653,18 @@ void TitleBar::ButtonClicked(ClickButton* button, double time)
    }
    if (button == mDisplayHelpButton)
       ShowHelp();
-   if (button == mDisplayUserPrefsEditorButton)
-      TheSynth->GetUserPrefsEditor()->Show();
    if (button == mMenuButton)
    {
       auto buttonRect = mMenuButton->GetRect();
       mMenuPopup.SetOwningContainer(GetOwningContainer());
       mMenuPopup.SetPosition(buttonRect.x, buttonRect.y + buttonRect.height + 2);
+      mMenuPopup.UpdateLayout();
       TheSynth->PushModalFocusItem(&mMenuPopup);
    }
    if (button == mPlayPauseButton)
       TheSynth->SetAudioPaused(!TheSynth->IsAudioPaused());
+   if (button == mTouchNavigationButton)
+      TheSynth->SetTouchNavigationMode(!TheSynth->IsTouchNavigationMode());
 }
 
 void TitleBar::ShowHelp()
@@ -629,23 +725,67 @@ void MenuPopup::CreateUIControls()
    BUTTON_SIZE(mSaveStateButton, "save", kButtonWidth, 32);
    BUTTON_SIZE(mSaveStateAsButton, "save as", kButtonWidth, 32);
    BUTTON_SIZE(mWriteAudioButton, "write audio", kButtonWidth, 32);
+   BUTTON_SIZE(mSettingsButton, "settings", kButtonWidth, 32);
    BUTTON_SIZE(mHomeButton, "move canvas home", kButtonWidth, 32);
    CHECKBOX(mEventLookaheadCheckbox, "lookahead (exp.)", &Transport::sDoEventLookahead);
    CHECKBOX(mShouldAutosaveCheckbox, "autosave", &ModularSynth::sShouldAutosave);
    CHECKBOX(mShowTooltipsCheckbox, "show tooltips", &HelpDisplay::sShowTooltips);
    ENDUIBLOCK(mWidth, mHeight);
 
+   mControls = { mWelcomeScreenButton, mResetLayoutButton, mLoadStateButton, mSaveStateButton, mSaveStateAsButton, mWriteAudioButton, mSettingsButton, mHomeButton, mEventLookaheadCheckbox, mShouldAutosaveCheckbox, mShowTooltipsCheckbox };
+
    mNewPatchConfirmPopup.CreateUIControls();
+}
+
+//lay the controls out top-to-bottom, wrapping into additional columns when they would extend past the bottom of the window
+void MenuPopup::UpdateLayout()
+{
+   const float kMargin = 3;
+   const float kSpacingX = 3;
+   const float kSpacingY = 2;
+   const float kWindowBottomPadding = 5;
+
+   float maxHeight = 0;
+   if (GetOwningContainer() != nullptr)
+      maxHeight = ofGetHeight() / GetOwningContainer()->GetDrawScale() - GetPosition(true).y - kWindowBottomPadding;
+
+   float x = kMargin;
+   float y = kMargin;
+   float columnWidth = 0;
+   float xMax = 0;
+   float yMax = 0;
+   for (auto* control : mControls)
+   {
+      ofVec2f dimensions = control->GetDimensions();
+      //start a new column if this control would overflow, unless it's the first one in the column
+      if (y > kMargin && y + dimensions.y + kSpacingY > maxHeight)
+      {
+         x += columnWidth + kSpacingX;
+         y = kMargin;
+         columnWidth = 0;
+      }
+      control->SetPosition(x, y);
+      columnWidth = MAX(columnWidth, dimensions.x);
+      xMax = MAX(xMax, x + dimensions.x);
+      yMax = MAX(yMax, y + dimensions.y);
+      y += dimensions.y + kSpacingY;
+   }
+
+   mWidth = xMax + kMargin;
+   mHeight = yMax + kSpacingY;
 }
 
 void MenuPopup::DrawModule()
 {
+   UpdateLayout();
+
    mWelcomeScreenButton->Draw();
    mSaveStateButton->Draw();
    mSaveStateAsButton->Draw();
    mLoadStateButton->Draw();
    mResetLayoutButton->Draw();
    mWriteAudioButton->Draw();
+   mSettingsButton->Draw();
    mHomeButton->Draw();
    mEventLookaheadCheckbox->Draw();
    mShouldAutosaveCheckbox->Draw();
@@ -672,6 +812,11 @@ void MenuPopup::ButtonClicked(ClickButton* button, double time)
    if (button == mWriteAudioButton)
    {
       TheSynth->SaveOutput();
+      TheSynth->PopModalFocusItem();
+   }
+   if (button == mSettingsButton)
+   {
+      TheSynth->GetUserPrefsEditor()->Show();
       TheSynth->PopModalFocusItem();
    }
    if (button == mHomeButton)

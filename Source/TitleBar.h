@@ -130,7 +130,10 @@ public:
 
    void ButtonClicked(ClickButton* button, double time) override;
 
+   void UpdateLayout();
+
 private:
+   std::vector<IUIControl*> mControls;
    ClickButton* mSaveLayoutButton{ nullptr };
    ClickButton* mResetLayoutButton{ nullptr };
    ClickButton* mWelcomeScreenButton{ nullptr };
@@ -138,6 +141,7 @@ private:
    ClickButton* mSaveStateAsButton{ nullptr };
    ClickButton* mLoadStateButton{ nullptr };
    ClickButton* mWriteAudioButton{ nullptr };
+   ClickButton* mSettingsButton{ nullptr };
    ClickButton* mHomeButton{ nullptr };
    Checkbox* mEventLookaheadCheckbox{ nullptr };
    Checkbox* mShouldAutosaveCheckbox{ nullptr };
@@ -187,17 +191,19 @@ private:
    void DrawModuleUnclipped() override;
    void GetModuleDimensions(float& width, float& height) override;
    void OnClicked(float x, float y, bool right) override;
+   void MouseReleased() override;
    bool MouseMoved(float x, float y) override;
 
-   bool HiddenByZoom() const;
    float GetPixelWidth() const;
+   float GetSideMargin() const;
+   float GetFullHeight() const;
 
    ClickButton* mPlayPauseButton{ nullptr };
    ClickButton* mMenuButton{ nullptr };
    ClickButton* mSaveLayoutButton{ nullptr };
    DropdownList* mLoadLayoutDropdown{ nullptr };
    ClickButton* mDisplayHelpButton{ nullptr };
-   ClickButton* mDisplayUserPrefsEditorButton{ nullptr };
+   ClickButton* mTouchNavigationButton{ nullptr };
    int mLoadLayoutIndex{ -1 };
 
    HelpDisplay* mHelpDisplay{ nullptr };
@@ -205,6 +211,8 @@ private:
    SpawnListManager mSpawnLists;
 
    bool mLeftCornerHovered{ false };
+   bool mIsDraggingSize{ false };
+   float mDragEdgeYOffset{ 0.0f };
 
    std::unique_ptr<PluginListWindow> mPluginListWindow;
 
@@ -214,6 +222,7 @@ private:
    double mDisplayMessageTime;
 
    int mNumDropdownRows{ 2 };
+   float mSpecifiedHeight{ -1 };
 };
 
 extern TitleBar* TheTitleBar;

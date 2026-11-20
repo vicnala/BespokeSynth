@@ -219,6 +219,14 @@ void WelcomeScreen::DrawModule()
 
    DrawTextBold("recent files:", kSaveStateButtonStartX, kSaveStateButtonStartY);
 
+   if (mScreenshotContextGeneration != gNanoVGContextGeneration)
+   {
+      //the screenshots belonged to the old nanovg context
+      mScreenshotContextGeneration = gNanoVGContextGeneration;
+      for (auto& recentFile : mRecentFiles)
+         recentFile.mScreenshotImageHandle = -1;
+   }
+
    for (int i = 0; i < (int)mRecentFiles.size(); ++i)
    {
       if (mRecentFiles[i].mButton == nullptr)
@@ -242,6 +250,7 @@ void WelcomeScreen::DrawModule()
          int screenshotSize = 0;
          std::string jsonLayoutString;
          ModularSynth::LoadStateHeader(in, screenshotData, screenshotSize, jsonLayoutString);
+         FileStreamIn::s32BitMode = false;
          if (screenshotData != nullptr)
             mRecentFiles[i].mScreenshotImageHandle = nvgCreateImageMem(gNanoVG, 0, screenshotData, screenshotSize);
          else

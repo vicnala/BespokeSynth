@@ -237,24 +237,21 @@ void Prefab::ButtonClicked(ClickButton* button, double time)
    using namespace juce;
    if (button == mSaveButton)
    {
-      bool isNativeFileChooser = !UserPrefs.force_juce_file_chooser.Get();
-      FileChooser chooser("Save prefab as...", File(ofToDataPath("prefabs/prefab.pfb")), "*.pfb", isNativeFileChooser, false, TheSynth->GetFileChooserParent());
-      if (chooser.browseForFileToSave(true))
+      auto onChosen = [this](const juce::FileChooser& chooser)
       {
-         std::string savePath = chooser.getResult().getFullPathName().toStdString();
-         SavePrefab(savePath);
-      }
+         SavePrefab(SaveTarget(chooser));
+      };
+      BrowseForFileToSave("Save prefab as...", File(ofToDataPath("prefabs/prefab.pfb")), "*.pfb", onChosen);
    }
 
    if (button == mLoadButton)
    {
-      bool isNativeFileChooser = !UserPrefs.force_juce_file_chooser.Get();
-      FileChooser chooser("Load prefab...", File(ofToDataPath("prefabs")), "*.pfb", isNativeFileChooser, false, TheSynth->GetFileChooserParent());
-      if (chooser.browseForFileToOpen())
+      auto onChosen = [this](const juce::FileChooser& chooser)
       {
-         std::string loadPath = chooser.getResult().getFullPathName().toStdString();
+         std::string loadPath = GetChosenFileForReading(chooser).getFullPathName().toStdString();
          LoadPrefab(ofToDataPath(loadPath));
-      }
+      };
+      BrowseForFileToOpen("Load prefab...", File(ofToDataPath("prefabs")), "*.pfb", onChosen);
    }
 
    if (button == mDisbandButton)
@@ -272,7 +269,7 @@ void Prefab::CheckboxUpdated(Checkbox* checkbox, double time)
    }
 }
 
-void Prefab::SavePrefab(std::string savePath)
+void Prefab::SavePrefab(const SaveTarget& target)
 {
    ofxJSONElement root;
 
@@ -294,12 +291,16 @@ void Prefab::SavePrefab(std::string savePath)
       lines += line + '\n';
    }
 
-   UpdatePrefabName(savePath);
+   UpdatePrefabName(target.GetPath());
 
-   FileStreamOut out(ofToDataPath(savePath));
+   {
+      FileStreamOut out(ofToDataPath(target.GetWritePath()));
 
-   out << lines;
-   mModuleContainer.SaveState(out);
+      out << lines;
+      mModuleContainer.SaveState(out);
+   }
+
+   target.Commit();
 }
 
 void Prefab::LoadPrefab(std::string loadPath)
